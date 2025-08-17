@@ -1,151 +1,80 @@
-<!doctype html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>iPhone-Klavier (C4–B5)</title>
-<style>
-  body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#f7f7fb;color:#111}
-  h1{font-size:20px;margin:14px}
-  .controls{display:flex;gap:12px;align-items:center;margin:0 14px 8px;flex-wrap:wrap}
-  .btn{background:#222;color:#fff;border:none;border-radius:8px;padding:10px 14px}
-  .board{padding:12px}
-  .piano{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:12px;background:#ececf4;padding:12px}
-  .row{display:flex;gap:6px;align-items:flex-end;min-width:800px}
-  .row + .row{margin-top:8px}
-  .key{display:inline-flex;align-items:flex-end;justify-content:center;font-weight:600;font-size:14px;border-radius:8px;user-select:none;touch-action:manipulation}
-  .white{width:64px;height:140px;background:#fff;border:2px solid #333;color:#111}
-  .black{width:46px;height:90px;background:#1b1b1b;border:2px solid #000;color:#fff}
-  .active{background:linear-gradient(#a6c8ff,#5ea0ff)!important;color:#000!important}
-  .chord{outline:3px solid #f6b73c;outline-offset:-3px}
-  .spacer{width:64px}
-  footer{padding:0 14px 18px;color:#666;font-size:13px}
-</style>
-</head>
-<body>
-<h1>🎹 iPhone-Klavier (C4–B5)</h1>
-<div class="controls">
-  <button id="start" class="btn">Audio starten</button>
-  <button id="beep" class="btn" style="background:#0a7">🔊 Test-Ton</button>
-  <label><input id="minor" type="checkbox"> Moll-Dreiklänge</label>
-</div>
-
-<div class="board">
-  <div class="piano" id="piano">
-    <!-- Schwarze Tasten (C#4–A#4) -->
-    <div class="row">
-      <div class="spacer"></div>
-      <button class="key black" data-midi="61">C#4</button>
-      <button class="key black" data-midi="63">D#4</button>
-      <div class="spacer"></div>
-      <button class="key black" data-midi="66">F#4</button>
-      <button class="key black" data-midi="68">G#4</button>
-      <button class="key black" data-midi="70">A#4</button>
-      <div class="spacer"></div>
-      <button class="key black" data-midi="73">C#5</button>
-      <button class="key black" data-midi="75">D#5</button>
-      <div class="spacer"></div>
-      <button class="key black" data-midi="78">F#5</button>
-      <button class="key black" data-midi="80">G#5</button>
-      <button class="key black" data-midi="82">A#5</button>
-      <div class="spacer"></div>
-    </div>
-    <!-- Weiße Tasten (C4–B5) -->
-    <div class="row">
-      <button class="key white" data-midi="60">C4</button>
-      <button class="key white" data-midi="62">D4</button>
-      <button class="key white" data-midi="64">E4</button>
-      <button class="key white" data-midi="65">F4</button>
-      <button class="key white" data-midi="67">G4</button>
-      <button class="key white" data-midi="69">A4</button>
-      <button class="key white" data-midi="71">B4</button>
-      <button class="key white" data-midi="72">C5</button>
-      <button class="key white" data-midi="74">D5</button>
-      <button class="key white" data-midi="76">E5</button>
-      <button class="key white" data-midi="77">F5</button>
-      <button class="key white" data-midi="79">G5</button>
-      <button class="key white" data-midi="81">A5</button>
-      <button class="key white" data-midi="83">B5</button>
-    </div>
-  </div>
-</div>
-
-<footer>
-  Tipp 1 = Ton · Tipp 2 = Dreiklang (Dur/Moll).  
-  Leise bis moderat üben; bei Kratzen → Pause. 💙
-</footer>
-
 <script>
 (()=>{
+// ---------- Audio-Grundlage ----------
 let ctx=null, master=null, started=false;
-const startBtn=document.getElementById('start');
-const testBtn=document.getElementById('beep');
-const minor=document.getElementById('minor');
-const keys=[...document.querySelectorAll('.key')];
-const tapState=new Map();
-
-function m2f(m){return 440*Math.pow(2,(m-69)/12)}
-function ensureCtx(){
+function m2f(m){ return 440*Math.pow(2,(m-69)/12); }
+async function ensureCtx(){
   if(!ctx){ ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'}); }
-  if(ctx.state==='suspended') return ctx.resume();
-  return Promise.resolve();
+  if(ctx.state==='suspended') await ctx.resume();
 }
 async function unlock(){
   await ensureCtx();
   if(!master){ master=ctx.createGain(); master.gain.value=0.9; master.connect(ctx.destination); }
-  const b=ctx.createBuffer(1,1,ctx.sampleRate); const s=ctx.createBufferSource();
+  // 1-Sample-Stille abspielen → iOS-Unlock
+  const b=ctx.createBuffer(1,1,ctx.sampleRate), s=ctx.createBufferSource();
   s.buffer=b; s.connect(master); s.start(0);
+  started=true; setUI();
 }
-function setUI(){ startBtn.disabled=true; startBtn.textContent='Audio aktiv'; }
+function setUI(){
+  const btn=document.getElementById('start');
+  if(btn){ btn.disabled=true; btn.textContent='Audio aktiv'; }
+}
 
-startBtn.addEventListener('click', async ()=>{ await unlock(); started=true; setUI(); }, {passive:true});
-testBtn.addEventListener('click', async ()=>{
-  await unlock(); started=true; setUI();
+// ---------- Tonerzeugung ----------
+function play(midi, dur=1.0){
+  if(!started || !ctx) return;
   const t=ctx.currentTime, o=ctx.createOscillator(), g=ctx.createGain();
-  o.type='triangle'; o.frequency.value=440;
-  g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(1,t+0.01); g.gain.linearRampToValueAtTime(0,t+0.6);
-  o.connect(g); g.connect(master); o.start(t); o.stop(t+0.65);
-}, {passive:true});
-['pointerdown','touchend'].forEach(ev=>{
-  window.addEventListener(ev, async ()=>{
-    if(!started){ await unlock(); started=true; setUI(); }
-  }, {once:true, passive:true});
-});
-document.addEventListener('visibilitychange', ()=>{ if(ctx&&ctx.state==='suspended') ctx.resume(); });
-
-function play(midi,dur=0.9){
-  if(!started||!ctx) return;
-  const t=ctx.currentTime, o=ctx.createOscillator(), g=ctx.createGain();
-  o.type='triangle'; o.frequency.value=m2f(midi);
+  o.type='triangle';
+  o.frequency.value=m2f(midi);
   g.gain.setValueAtTime(0,t);
   g.gain.linearRampToValueAtTime(1,t+0.01);
   g.gain.linearRampToValueAtTime(0,t+dur);
   o.connect(g); g.connect(master);
   o.start(t); o.stop(t+dur+0.05);
 }
-function chord(root,ints){ ints.forEach(s=>play(root+s,1.1)); }
-function flash(el,cls,ms){ el.classList.add(cls); setTimeout(()=>el.classList.remove(cls),ms); }
+function playChord(root, ints, dur=2.0){ ints.forEach(s=>play(root+s, dur)); }
 
-keys.forEach(btn=>{
-  const midi=parseInt(btn.dataset.midi,10);
-  const h=(e)=>{
-    e.preventDefault();
-    if(!started) return;
-    const p=(tapState.get(midi)||0)^1; tapState.set(midi,p);
-    if(p===1){ flash(btn,'active',300); play(midi); }
-    else{
-      const ints=minor.checked?[0,3,7]:[0,4,7];
-      ints.forEach(s=>{
-        const m=midi+s; const k=document.querySelector(`.key[data-midi="${m}"]`);
-        if(k) flash(k,'chord',600);
-      });
-      chord(midi,ints);
-    }
-  };
-  btn.addEventListener('pointerdown',h,{passive:false});
-  btn.addEventListener('click',h,{passive:false});
+function flash(el, cls, ms){ el.classList.add(cls); setTimeout(()=>el.classList.remove(cls), ms); }
+
+// ---------- Buttons: Start & Test ----------
+const startBtn = document.getElementById('start');
+if(startBtn){ startBtn.addEventListener('click', unlock); }
+
+const testBtn = document.getElementById('beep');
+if(testBtn){
+  testBtn.addEventListener('click', async ()=>{
+    if(!started) await unlock();
+    play(69, 0.6); // A4 kurzer Testton
+  });
+}
+
+// ---------- Klicklogik ----------
+const minor = document.getElementById('minor');
+const busyByMidi = new Set();
+
+document.body.addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.key');
+  if(!btn) return;
+  if(!started) await unlock();
+
+  const midi = parseInt(btn.dataset.midi,10);
+  if(busyByMidi.has(midi)) return;
+  busyByMidi.add(midi);
+
+  // 1) Einzeltton 1 s
+  flash(btn,'active', 350);
+  play(midi, 1.0);
+
+  // 2) Nach 1 s Pause → 3) Dreiklang 2 s
+  setTimeout(()=>{
+    const ints = (minor && minor.checked) ? [0,3,7] : [0,4,7]; // Grundstellung
+    ints.forEach(semi=>{
+      const k = document.querySelector(`.key[data-midi="${midi+semi}"]`);
+      if(k) flash(k,'chord', 700);
+    });
+    playChord(midi, ints, 2.0); // <-- jetzt 2 Sekunden
+    setTimeout(()=>busyByMidi.delete(midi), 2100);
+  }, 2000); // 1s Ton + 1s Pause = Start bei 2s
 });
 })();
 </script>
-</body>
-</html>
