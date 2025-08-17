@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>iPhone-Klavier (C4–B4)</title>
+<style>
+  body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#f7f7fb;color:#111}
+  h1{font-size:20px;margin:14px}
+  .controls{display:flex;gap:12px;align-items:center;margin:0 14px 8px;flex-wrap:wrap}
+  .btn{background:#222;color:#fff;border:none;border-radius:8px;padding:10px 14px}
+  .board{padding:12px}
+  .piano{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:12px;background:#ececf4;padding:12px}
+  .row{display:flex;gap:6px;align-items:flex-end;min-width:520px}
+  .row + .row{margin-top:8px}
+  .key{display:inline-flex;align-items:flex-end;justify-content:center;font-weight:600;font-size:14px;border-radius:8px;user-select:none;touch-action:manipulation}
+  .white{width:64px;height:140px;background:#fff;border:2px solid #333;color:#111}
+  .black{width:46px;height:90px;background:#1b1b1b;border:2px solid #000;color:#fff}
+  .active{background:linear-gradient(#a6c8ff,#5ea0ff)!important;color:#000!important}
+  .chord{outline:3px solid #f6b73c;outline-offset:-3px}
+  .spacer{width:64px}
+  footer{padding:0 14px 18px;color:#666;font-size:13px}
+</style>
+</head>
+<body>
+<h1>🎹 iPhone-Klavier (C4–B4)</h1>
+<div class="controls">
+  <button id="start" class="btn">Audio starten</button>
+  <label><input id="minor" type="checkbox"> Moll-Dreiklänge</label>
+</div>
+
+<div class="board">
+  <div class="piano" id="piano">
+    <div class="row">
+      <div class="spacer"></div>
+      <button class="key black" data-midi="61">C#</button>
+      <button class="key black" data-midi="63">D#</button>
+      <div class="spacer"></div>
+      <button class="key black" data-midi="66">F#</button>
+      <button class="key black" data-midi="68">G#</button>
+      <button class="key black" data-midi="70">A#</button>
+      <div class="spacer"></div>
+    </div>
+    <div class="row">
+      <button class="key white" data-midi="60">C</button>
+      <button class="key white" data-midi="62">D</button>
+      <button class="key white" data-midi="64">E</button>
+      <button class="key white" data-midi="65">F</button>
+      <button class="key white" data-midi="67">G</button>
+      <button class="key white" data-midi="69">A</button>
+      <button class="key white" data-midi="71">B</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Tipp 1 = Ton · Tipp 2 = Dreiklang (Dur/Moll).  
+  Leise bis moderat üben; bei Kratzen → Pause. 💙
+</footer>
+
+<script>
+(()=>{
+  let ctx=null, master=null, started=false;
+  const startBtn=document.getElementById('start');
+  const minor=document.getElementById('minor');
+  const keys=[...document.querySelectorAll('.key')];
+  const tapState=new Map();
+
+  function m2f(m){return 440*Math.pow(2,(m-69)/12)}
+  function ensureCtx(){
+    if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});}
+    if(ctx.state==='suspended') ctx.resume();
+  }
+  async function unlock(){
+    ensureCtx();
+    if(!master){master=ctx.createGain();master.gain.value=0.9;master.connect(ctx.destination);}
+    const b=ctx.createBuffer(1,1,ctx.sampleRate);
+    const src=ctx.createBufferSource();
+    src.buffer=b; src.connect(master); src.start(0);
+  }
+  function setUI(){startBtn.disabled=true;startBtn.textContent='Audio aktiv';}
+  startBtn.addEventListener('click',async()=>{await unlock();started=true;setUI();});
+  ['pointerdown','touchend'].forEach(ev=>{
+    window.addEventListener(ev,async()=>{
+      if(!started){await unlock();started=true;setUI();}
+    },{once:true});
+  });
+  document.addEventListener('visibilitychange',()=>{if(ctx&&ctx.state==='suspended')ctx.resume();});
+
+  function play(midi,dur=0.9){
+    if(!started||!ctx) return;
+    const t=ctx.currentTime;
+    const osc=ctx.createOscillator(), g=ctx.createGain();
+    osc.type='triangle'; osc.frequency.value=m2f(midi);
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(1,t+0.01);
+    g.gain.linearRampToValueAtTime(0,t+dur);
+    osc.connect(g); g.connect(master);
+    osc.start(t); osc.stop(t+dur+0.05);
+  }
+  function chord(root,ints){ints.forEach(s=>play(root+s,1.1));}
+  function flash(el,cls,ms){el.classList.add(cls);setTimeout(()=>el.classList.remove(cls),ms);}
+
+  keys.forEach(btn=>{
+    const midi=parseInt(btn.dataset.midi,10);
+    const handler=(e)=>{
+      e.preventDefault();
+      if(!started) return;
+      const p=(tapState.get(midi)||0)^1;
+      tapState.set(midi,p);
+      if(p===1){flash(btn,'active',300);play(midi);}
+      else{
+        const ints=minor.checked?[0,3,7]:[0,4,7];
+        ints.forEach(s=>{
+          const m=midi+s;
+          const k=document.querySelector(`.key[data-midi="${m}"]`);
+          if(k) flash(k,'chord',600);
+        });
+        chord(midi,ints);
+      }
+    };
+    btn.addEventListener('pointerdown',handler);
+    btn.addEventListener('click',handler);
+  });
+})();
+</script>
+</body>
+</html>
