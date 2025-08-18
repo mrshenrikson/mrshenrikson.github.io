@@ -1,80 +1,174 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mein Klavier – Oktave umschaltbar (C1..C3)</title>
+<style>
+  :root{
+    --wW:64px; --bW:46px; --wH:140px; --bH:90px; --gap:6px;
+    --accent:#5ea0ff; --mark:#f6b73c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,system-ui,Segoe UI,Roboto,Helvetica,Arial;background:#f7f7fb;color:#111}
+  h1{font-size:20px;margin:14px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 14px 8px}
+  .btn{background:#222;color:#fff;border:none;border-radius:8px;padding:10px 14px;touch-action:manipulation}
+  .btn:disabled{opacity:.6}
+  .oct-wrap{display:flex;gap:8px;align-items:center}
+  .label{padding:6px 10px;border-radius:8px;background:#e9eefb;font-weight:600}
+  .board{padding:12px}
+  .piano{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:12px;background:#ececf4;padding:12px}
+  .row{display:flex;gap:var(--gap);align-items:flex-end;min-width:calc(7*var(--wW)+6*var(--gap))}
+  .row+.row{margin-top:8px}
+  .key{display:inline-flex;align-items:flex-end;justify-content:center;font-weight:600;font-size:14px;border-radius:8px;user-select:none;touch-action:manipulation}
+  .white{width:var(--wW);height:var(--wH);background:#fff;border:2px solid #333;color:#111}
+  .black{width:var(--bW);height:var(--bH);background:#1b1b1b;border:2px solid #000;color:#fff}
+  .spacer{width:var(--wW)}
+  .active{background:linear-gradient(#a6c8ff,#5ea0ff)!important;color:#000!important}
+  .chord{outline:3px solid var(--mark);outline-offset:-3px}
+  footer{padding:0 14px 18px;color:#666;font-size:13px}
+</style>
+</head>
+<body>
+<h1>🎹 Mein Klavier (eine Oktave, umschaltbar C1↔C2↔C3)</h1>
+
+<div class="controls">
+  <div class="oct-wrap">
+    <button id="prevOct" class="btn" title="vorige Oktave">⟵</button>
+    <span id="octLabel" class="label">Oktave: C1</span>
+    <button id="nextOct" class="btn" title="nächste Oktave">⟶</button>
+  </div>
+  <label><input id="minor" type="checkbox"> Moll-Dreiklänge</label>
+</div>
+
+<div class="board">
+  <div class="piano" id="piano">
+    <!-- Reihe 1: schwarze Tasten -->
+    <div class="row" id="rowBlack">
+      <div class="spacer"></div>
+      <button class="key black" data-semi="1">C#</button>
+      <button class="key black" data-semi="3">D#</button>
+      <div class="spacer"></div>
+      <button class="key black" data-semi="6">F#</button>
+      <button class="key black" data-semi="8">G#</button>
+      <button class="key black" data-semi="10">A#</button>
+      <div class="spacer"></div>
+    </div>
+    <!-- Reihe 2: weiße Tasten -->
+    <div class="row" id="rowWhite">
+      <button class="key white" data-semi="0">C</button>
+      <button class="key white" data-semi="2">D</button>
+      <button class="key white" data-semi="4">E</button>
+      <button class="key white" data-semi="5">F</button>
+      <button class="key white" data-semi="7">G</button>
+      <button class="key white" data-semi="9">A</button>
+      <button class="key white" data-semi="11">B</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  Tipp auf eine Taste: 2 s Einzeltton → 1 s Pause → 3 s Dreiklang (Grundstellung; Dur/Moll schaltbar).  
+  Leise bis moderat üben; bei Kratzen → Pause. 💙
+</footer>
+
 <script>
 (()=>{
-// ---------- Audio-Grundlage ----------
-let ctx=null, master=null, started=false;
-function m2f(m){ return 440*Math.pow(2,(m-69)/12); }
-async function ensureCtx(){
-  if(!ctx){ ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'}); }
-  if(ctx.state==='suspended') await ctx.resume();
-}
-async function unlock(){
-  await ensureCtx();
-  if(!master){ master=ctx.createGain(); master.gain.value=0.9; master.connect(ctx.destination); }
-  // 1-Sample-Stille abspielen → iOS-Unlock
-  const b=ctx.createBuffer(1,1,ctx.sampleRate), s=ctx.createBufferSource();
-  s.buffer=b; s.connect(master); s.start(0);
-  started=true; setUI();
-}
-function setUI(){
-  const btn=document.getElementById('start');
-  if(btn){ btn.disabled=true; btn.textContent='Audio aktiv'; }
-}
+/* ————— Einstellungen ————— */
+const LOWEST_OCT = 1;   // C1
+const HIGHEST_OCT = 3;  // C3
+let currentOct = 1;     // Startansicht: C1
 
-// ---------- Tonerzeugung ----------
-function play(midi, dur=1.0){
-  if(!started || !ctx) return;
-  const t=ctx.currentTime, o=ctx.createOscillator(), g=ctx.createGain();
-  o.type='triangle';
-  o.frequency.value=m2f(midi);
-  g.gain.setValueAtTime(0,t);
-  g.gain.linearRampToValueAtTime(1,t+0.01);
-  g.gain.linearRampToValueAtTime(0,t+dur);
-  o.connect(g); g.connect(master);
-  o.start(t); o.stop(t+dur+0.05);
+/* ————— Hilfen: Notennamen/Filenames ————— */
+const NAMES = ['C','Cs','D','Ds','E','F','Fs','G','Gs','A','As','B'];
+function noteName(oct, semi){ return NAMES[semi] + oct; } // z.B. semi=1, oct=2 -> "Cs2"
+
+/* ————— Sample-Player (AudioTag) ————— */
+const cache = new Map(); // "C2" -> Audio (Master); pro Play wird geklont
+function getAudio(note){ // note z.B. "Fs1"
+  const key = note.toUpperCase();
+  if(!cache.has(key)){
+    const a = new Audio(`samples/${key}.mp3`);
+    a.preload = 'auto';
+    cache.set(key, a);
+  }
+  // Klon für gleichzeitiges Abspielen
+  return cache.get(key).cloneNode(true);
 }
-function playChord(root, ints, dur=2.0){ ints.forEach(s=>play(root+s, dur)); }
-
-function flash(el, cls, ms){ el.classList.add(cls); setTimeout(()=>el.classList.remove(cls), ms); }
-
-// ---------- Buttons: Start & Test ----------
-const startBtn = document.getElementById('start');
-if(startBtn){ startBtn.addEventListener('click', unlock); }
-
-const testBtn = document.getElementById('beep');
-if(testBtn){
-  testBtn.addEventListener('click', async ()=>{
-    if(!started) await unlock();
-    play(69, 0.6); // A4 kurzer Testton
-  });
+function playSample(note, durSec=2.0){
+  const a = getAudio(note);
+  a.currentTime = 0;
+  a.play().catch(()=>{}); // iOS spielt nach User-Tap
+  if(durSec>0){
+    setTimeout(()=>{ try{ a.pause(); a.currentTime = 0; }catch(e){} }, Math.round(durSec*1000));
+  }
 }
 
-// ---------- Klicklogik ----------
+/* ————— UI/State ————— */
+const lbl = document.getElementById('octLabel');
+const prevBtn = document.getElementById('prevOct');
+const nextBtn = document.getElementById('nextOct');
 const minor = document.getElementById('minor');
-const busyByMidi = new Set();
 
-document.body.addEventListener('click', async (e)=>{
+function updateLabel(){
+  lbl.textContent = `Oktave: C${currentOct}`;
+  prevBtn.disabled = (currentOct===LOWEST_OCT);
+  nextBtn.disabled = (currentOct===HIGHEST_OCT);
+}
+updateLabel();
+
+prevBtn.addEventListener('click', ()=>{ if(currentOct>LOWEST_OCT){ currentOct--; updateLabel(); }});
+nextBtn.addEventListener('click', ()=>{ if(currentOct<HIGHEST_OCT){ currentOct++; updateLabel(); }});
+
+/* ————— Visuelles Feedback ————— */
+function flash(el, cls, ms){ el.classList.add(cls); setTimeout(()=>el.classList.remove(cls), ms); }
+function keyElFor(oct, semi){
+  // findet die sichtbare Taste dieser Oktave: gleiche semitone-Buttons
+  return document.querySelector(`.key[data-semi="${semi}"]`);
+}
+
+/* ————— Ablauf beim Tasten-Tap —————
+   1) Einzeltton 2s
+   2) 1s Pause
+   3) Dreiklang (Grundstellung) 3s
+*/
+const busy = new Set(); // verhindert Doppelstarts pro semi bis Sequenz fertig ist
+
+document.body.addEventListener('click', (e)=>{
   const btn = e.target.closest('.key');
   if(!btn) return;
-  if(!started) await unlock();
 
-  const midi = parseInt(btn.dataset.midi,10);
-  if(busyByMidi.has(midi)) return;
-  busyByMidi.add(midi);
+  const semi = parseInt(btn.dataset.semi, 10);
+  if(busy.has(semi)) return;
+  busy.add(semi);
 
-  // 1) Einzeltton 1 s
-  flash(btn,'active', 350);
-  play(midi, 1.0);
+  const rootNote = noteName(currentOct, semi); // z.B. "E2"
 
-  // 2) Nach 1 s Pause → 3) Dreiklang 2 s
+  // 1) Einzeltton 2 s
+  flash(btn, 'active', 400);
+  playSample(rootNote, 2.0);
+
+  // 2) Pause 1 s (nach Ton-Ende)
+  const PAUSE_MS = 1000;
+
+  // 3) Dreiklang 3 s (Grundstellung, je nach Dur/Moll)
   setTimeout(()=>{
-    const ints = (minor && minor.checked) ? [0,3,7] : [0,4,7]; // Grundstellung
-    ints.forEach(semi=>{
-      const k = document.querySelector(`.key[data-midi="${midi+semi}"]`);
-      if(k) flash(k,'chord', 700);
+    const ints = minor && minor.checked ? [0,3,7] : [0,4,7];
+    // visuelle Markierung der Akkordtöne
+    ints.forEach(s=>{
+      const k = keyElFor(currentOct, (semi + s) % 12);
+      if(k) flash(k, 'chord', 900);
     });
-    playChord(midi, ints, 2.0); // <-- jetzt 2 Sekunden
-    setTimeout(()=>busyByMidi.delete(midi), 2100);
-  }, 2000); // 1s Ton + 1s Pause = Start bei 2s
+    // passende Sample-Namen bilden (gleiches Oktav-Fundament, echte Grundstellung)
+    const notes = ints.map(s => noteName(currentOct, (semi + s) % 12));
+    notes.forEach(n => playSample(n, 3.0));
+
+    // nach ~3 s ist die Sequenz durch – freigeben
+    setTimeout(()=>busy.delete(semi), 3100);
+  }, 2000 + PAUSE_MS); // 2s Ton + 1s Pause
 });
 })();
 </script>
+</body>
+</html>
